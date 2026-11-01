@@ -88,6 +88,11 @@ export function buildTimeline(rig: Rig) {
   return tl;
 }
 
+/** Opening shot, set before the timeline exists (used during warm-up). */
+export function startCamera(rig: Rig) {
+  setCam(hero.cam, cameraKeys(rig)[0]);
+}
+
 /** Final frame for reduced motion: every value at 1, camera at the last key. */
 export function finalCamera(rig: Rig) {
   const keys = cameraKeys(rig);

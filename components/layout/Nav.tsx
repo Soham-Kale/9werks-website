@@ -88,7 +88,7 @@ export function Nav() {
     <header
       className={`fixed inset-x-0 top-0 z-50 transition-[transform,background-color,border-color] duration-500 ease-out ${
         hidden && !open ? "-translate-y-full" : "translate-y-0"
-      } ${solid || open ? "border-b border-line bg-obsidian/85 backdrop-blur-md" : "border-b border-transparent"}`}
+      } ${solid || open ? "border-b border-line bg-obsidian/95" : "border-b border-transparent"}`}
     >
       <nav aria-label="Main" className="shell grid h-[var(--nav-h)] grid-cols-[1fr_auto_1fr] items-center">
         <ul className="hidden items-center gap-10 md:flex">
@@ -111,9 +111,12 @@ export function Nav() {
           <a href={`tel:${site.phoneE164}`} className="t-label link hidden xl:inline">
             {site.phoneDisplay}
           </a>
-          <Link href="/booking" className="btn btn-primary hidden !min-h-[44px] !px-5 md:inline-flex">
-            Book a service
-          </Link>
+          {/* Wrapper carries the breakpoint: .btn sets its own display and would beat `hidden` */}
+          <span className="hidden md:inline-flex">
+            <Link href="/booking" className="btn btn-primary !min-h-[44px] !px-5">
+              Book a service
+            </Link>
+          </span>
           <button
             ref={toggleRef}
             type="button"

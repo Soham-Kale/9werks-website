@@ -42,6 +42,7 @@ async function page(vp, opts = {}) {
 async function heroJourney(name, vp, points) {
   const p = await page(vp);
   await p.goto(base + "/", { waitUntil: "networkidle" });
+  await p.evaluate(() => scrollBy(0, 1)); // phones load the 3D on first interaction
   await p.waitForSelector(".hero-track[data-ready]", { timeout: 60000 }).catch(() => errors.push(`[${vp.width}] hero never became ready`));
   await p.waitForTimeout(1500);
   for (const pt of points) {
@@ -102,6 +103,7 @@ if (mode === "hero") {
   for (const [n, vp] of Object.entries(viewports)) {
     const p = await page(vp, { reduced: true });
     await p.goto(base + "/", { waitUntil: "networkidle" });
+    await p.evaluate(() => scrollBy(0, 1)); // phones load the 3D on first interaction
     await p.waitForSelector(".hero-track[data-ready]", { timeout: 60000 }).catch(() => errors.push(`[${vp.width}] reduced: hero never ready`));
     await p.waitForTimeout(2000);
     await p.screenshot({ path: file(`reduced-${n}.png`) });

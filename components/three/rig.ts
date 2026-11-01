@@ -86,13 +86,48 @@ function localOffset(obj: THREE.Object3D, worldOffset: THREE.Vector3) {
   return b.sub(a);
 }
 
+/**
+ * Where the rim's hub face is, along the wheel axis (X, in wheel space): the
+ * outermost point of the rim and spoke geometry within the cap's radius of
+ * the axis. Spokes on most alloys are dished, so a fixed fraction of the
+ * wheel width leaves the cap floating in front of them. Returns null if the
+ * rim has no geometry near the centre (open centre bore).
+ */
+function hubFace(objs: THREE.Object3D[], capRadius: number, outward: 1 | -1): number | null {
+  const v = new THREE.Vector3();
+  let best: number | null = null;
+  const r2 = (capRadius * 1.3) ** 2;
+  for (const obj of objs) {
+    obj.updateMatrix();
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      const pos = mesh.isMesh ? mesh.geometry.getAttribute("position") : null;
+      if (!pos) return;
+      // Matrix from this mesh into wheel (pivot) space.
+      const m = new THREE.Matrix4();
+      for (let p: THREE.Object3D | null = mesh; p && p !== obj.parent; p = p.parent) {
+        p.updateMatrix();
+        m.premultiply(p.matrix);
+      }
+      const step = Math.max(1, Math.floor(pos.count / 20000));
+      for (let i = 0; i < pos.count; i += step) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        if (v.y * v.y + v.z * v.z > r2) continue;
+        const x = v.x * outward;
+        if (best === null || x > best) best = x;
+      }
+    });
+  }
+  return best === null ? null : best * outward;
+}
+
 function buildCap(radius: number, outward: 1 | -1, faceMaps: FaceMaps) {
   const group = new THREE.Group();
   group.name = "9WERKS_CentreCap";
   const metal = new THREE.MeshPhysicalMaterial({
-    color: "#c9c3b5",
+    color: "#46474a",
     metalness: 1,
-    roughness: 0.2,
+    roughness: 0.24,
     clearcoat: 0.6,
     clearcoatRoughness: 0.08,
   });
@@ -106,12 +141,12 @@ function buildCap(radius: number, outward: 1 | -1, faceMaps: FaceMaps) {
     clearcoat: 0.4,
     clearcoatRoughness: 0.12,
   });
-  const depth = radius * 0.22;
+  const depth = radius * 0.16;
   const body = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.02, depth, 96, 1), [metal, face, metal]);
   body.rotation.z = outward === 1 ? -Math.PI / 2 : Math.PI / 2; // +Y face -> outward along X
   // Rotate the face so the emblem stands upright when seen from outside.
   body.rotateY(outward === 1 ? Math.PI : 0);
-  const bezel = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.0, radius * 0.07, 24, 128), metal);
+  const bezel = new THREE.Mesh(new THREE.TorusGeometry(radius * 0.99, radius * 0.05, 24, 128), metal);
   bezel.rotation.y = Math.PI / 2;
   bezel.position.x = outward * depth * 0.5;
   group.add(body, bezel);
@@ -140,7 +175,11 @@ function buildHub(radius: number, outward: 1 | -1) {
   return group;
 }
 
-export function buildRig(source: THREE.Object3D, opts: { mobile: boolean }): Rig {
+/**
+ * opts.beams: add the two headlight spot beams. Every light is evaluated for
+ * every lit pixel, even at zero intensity, so integrated GPUs go without.
+ */
+export function buildRig(source: THREE.Object3D, opts: { mobile: boolean; beams: boolean }): Rig {
   const model = source.clone(true);
   const inner = new THREE.Group();
   const root = new THREE.Group();
@@ -179,18 +218,27 @@ export function buildRig(source: THREE.Object3D, opts: { mobile: boolean }): Rig
         if (ov.color) std.color?.set(ov.color);
         if (ov.metalness !== undefined) std.metalness = ov.metalness;
         if (ov.roughness !== undefined) std.roughness = ov.roughness;
+        if (ov.stripTextures) {
+          std.map = null;
+          std.normalMap = null;
+          std.bumpMap = null;
+          std.needsUpdate = true;
+        }
       }
       if (cfg.paintMaterial.test(m.name) && std.isMeshStandardMaterial) {
         std.clearcoat = 1;
         std.clearcoatRoughness = 0.04;
         paint.push(std);
       }
-      if (cfg.headlightMaterial.test(m.name)) headlights.push({ mat: std, base: std.emissiveIntensity });
+      if (cfg.headlightMaterial.test(m.name)) {
+        std.emissive.set("#fff6e8");
+        headlights.push({ mat: std, base: std.emissiveIntensity });
+      }
       if (cfg.taillightMaterial.test(m.name)) taillights.push({ mat: std, base: std.emissiveIntensity });
-      // Glass: a touch of roughness so point-light highlights don't flare in bloom.
-      if (/glass/i.test(m.name)) std.roughness = Math.max(std.roughness, 0.12);
-      // Real transmission on desktop, a cheap tinted pane on phones.
-      if (/glass/i.test(m.name) && opts.mobile && std.isMeshPhysicalMaterial) {
+      // Glass: a tinted pane rather than true transmission. Transmission makes
+      // three.js render every opaque object a second time, each frame, for
+      // what is a dark window: too costly for a scroll animation.
+      if (/glass/i.test(m.name) && std.isMeshPhysicalMaterial) {
         std.transmission = 0;
         std.transparent = true;
         std.opacity = 0.42;
@@ -250,8 +298,12 @@ export function buildRig(source: THREE.Object3D, opts: { mobile: boolean }): Rig
     pivot.add(hub);
     parts.hub.push(makePart(hub, new THREE.Vector3()));
 
-    const cap = buildCap(radius * 0.19, outward, faceMaps);
-    cap.position.x = outward * halfWidth * 0.86;
+    const capRadius = radius * 0.19;
+    const cap = buildCap(capRadius, outward, faceMaps);
+    // The cap's back sits on the hub face, slightly recessed into it.
+    const face = hubFace([...parts.rim, ...parts.spokes].map((p) => p.obj), capRadius, outward);
+    const capDepth = capRadius * 0.16;
+    cap.position.x = face !== null ? face + outward * capDepth * 0.3 : outward * halfWidth * 0.86;
     pivot.add(cap);
     parts.cap.push(makePart(cap, new THREE.Vector3()));
     cap.userData.materials.forEach((mm: THREE.Material) => disposables.push(mm));
@@ -384,7 +436,7 @@ export function buildRig(source: THREE.Object3D, opts: { mobile: boolean }): Rig
 
   const beams = new THREE.Group();
   beams.name = "HeadlightBeams";
-  if (!opts.mobile) {
+  if (opts.beams) {
     for (const a of anchors.slice(0, 2)) {
       const light = new THREE.SpotLight("#fff3e0", 0, 14, 0.42, 0.65, 1.6);
       light.position.copy(a);
@@ -424,7 +476,12 @@ export function applyPart(p: Part, k: number) {
 const lerp = THREE.MathUtils.lerp;
 
 /** Poses the whole rig for one frame of the timeline state. */
-export function updateRig(rig: Rig, s: AssemblyState, progress: number) {
+/**
+ * cullInterior: once the tinted glass is fitted, stop drawing the interior.
+ * Through dark glass it is barely visible, and its ~35 meshes are draw calls
+ * the CPU of an integrated-graphics laptop cannot spare.
+ */
+export function updateRig(rig: Rig, s: AssemblyState, progress: number, cullInterior = false) {
   const w = rig.hero;
 
   // Hero wheel parts.
@@ -466,7 +523,11 @@ export function updateRig(rig: Rig, s: AssemblyState, progress: number) {
   // Car groups.
   const g = rig.groups;
   g.chassis.forEach((p) => applyPart(p, s.chassis));
-  g.interior.forEach((p) => applyPart(p, s.interior));
+  const hideInterior = cullInterior && s.glass >= 1;
+  g.interior.forEach((p) => {
+    applyPart(p, s.interior);
+    if (hideInterior) p.obj.visible = false;
+  });
   g.body.forEach((p) => applyPart(p, s.body));
   g.glass.forEach((p) => applyPart(p, s.glass));
   g.lights.forEach((p) => applyPart(p, s.lights));
@@ -476,11 +537,11 @@ export function updateRig(rig: Rig, s: AssemblyState, progress: number) {
   // Headlights and tail lights.
   const hl = s.headlights;
   for (const h of rig.headlights) {
-    h.mat.emissive.set("#fff6e8");
     h.mat.emissiveIntensity = lerp(0.02, 14, hl);
   }
   for (const t of rig.taillights) t.mat.emissiveIntensity = lerp(0.1, 4, hl);
-  rig.beams.visible = hl > 0.01;
+  // Beams stay in the scene at zero intensity: hiding a light changes the
+  // light count, which makes three.js recompile every lit material at once.
   rig.beams.children.forEach((c) => {
     if ((c as THREE.SpotLight).isSpotLight) (c as THREE.SpotLight).intensity = hl * 30;
   });

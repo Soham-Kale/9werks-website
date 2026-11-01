@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { ContactShadows, Environment, Lightformer, MeshReflectorMaterial } from "@react-three/drei";
@@ -10,24 +10,38 @@ import { Vehicle } from "./Vehicle";
 import { hero } from "./store";
 import type { Rig } from "./rig";
 
+/**
+ * Quality step, set by the frame-rate monitor in HeroExperience.
+ * 2: mirror floor, 4x MSAA. 1: matte floor, 2x MSAA. 0: matte floor, no MSAA.
+ * Pixel ratio is chosen per step in HeroExperience.
+ */
+export type Tier = 0 | 1 | 2;
+
 type Quality = { mobile: boolean; reduced: boolean };
 
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Applies the timeline's camera with frame-rate independent damping. */
 function CameraRig({ mobile, reduced }: Quality) {
-  const pos = useRef(new THREE.Vector3());
-  const tgt = useRef(new THREE.Vector3());
+  // Scratch vectors, reused every frame so the camera never allocates.
+  const v = useRef({
+    pos: new THREE.Vector3(),
+    tgt: new THREE.Vector3(),
+    desired: new THREE.Vector3(),
+    target: new THREE.Vector3(),
+    rel: new THREE.Vector3(),
+  });
   const first = useRef(true);
   const pointer = useRef({ x: 0, y: 0 });
 
   // Everything mutable comes from the frame state, not from render-time hooks.
   useFrame((state, dt) => {
     const { size, invalidate } = state;
+    const { pos, tgt, desired, target, rel } = v.current;
     const c = hero.cam;
     const cam = state.camera as THREE.PerspectiveCamera;
-    const target = new THREE.Vector3(c.tx, c.ty, c.tz);
-    const desired = new THREE.Vector3(c.px, c.py, c.pz);
+    target.set(c.tx, c.ty, c.tz);
+    desired.set(c.px, c.py, c.pz);
     // Portrait screens: pull the camera back so the subject fits.
     const aspect = size.width / size.height;
     if (aspect < 1.2) desired.sub(target).multiplyScalar(1 + (1.2 - aspect) * 1.55).add(target);
@@ -36,8 +50,7 @@ function CameraRig({ mobile, reduced }: Quality) {
     const idle = !reduced && hero.progress > 0.995 ? state.clock.elapsedTime * 0.05 : 0;
     const angle = hero.state.orbit * (mobile ? 0.35 : 0.75) + idle;
     if (angle) {
-      const rel = desired.clone().sub(target);
-      rel.applyAxisAngle(UP, angle);
+      rel.copy(desired).sub(target).applyAxisAngle(UP, angle);
       desired.copy(target).add(rel);
     }
     // A touch of pointer parallax on desktop.
@@ -48,17 +61,18 @@ function CameraRig({ mobile, reduced }: Quality) {
       desired.y += pointer.current.y * 0.06;
     }
 
-    if (first.current || reduced) {
-      pos.current.copy(desired);
-      tgt.current.copy(target);
+    if (first.current || reduced || hero.snapCamera) {
+      pos.copy(desired);
+      tgt.copy(target);
       first.current = false;
+      hero.snapCamera = false;
     } else {
-      const k = 1 - Math.pow(1 - 0.12, Math.min(dt, 0.1) * 60);
-      pos.current.lerp(desired, k);
-      tgt.current.lerp(target, k);
+      const k = 1 - Math.pow(1 - 0.14, Math.min(dt, 0.1) * 60);
+      pos.lerp(desired, k);
+      tgt.lerp(target, k);
     }
-    cam.position.copy(pos.current);
-    cam.lookAt(tgt.current);
+    cam.position.copy(pos);
+    cam.lookAt(tgt);
     // Wide screens: shift the subject right of centre, leaving the left
     // third calm for the captions.
     const shift = !mobile && aspect > 1.2 ? -size.width * (0.11 + 0.05 * (1 - THREE.MathUtils.smoothstep(hero.progress, 0.08, 0.18))) * (1 - hero.state.showroom * 0.6) : 0;
@@ -74,8 +88,8 @@ function CameraRig({ mobile, reduced }: Quality) {
     // Keep rendering while easing, while the idle orbit runs, or while the
     // pointer is settling; otherwise the loop rests.
     const moving =
-      pos.current.distanceToSquared(desired) > 1e-7 ||
-      tgt.current.distanceToSquared(target) > 1e-7 ||
+      pos.distanceToSquared(desired) > 1e-7 ||
+      tgt.distanceToSquared(target) > 1e-7 ||
       idle > 0 ||
       Math.abs(state.pointer.x - pointer.current.x) > 1e-3;
     if (moving) invalidate();
@@ -83,43 +97,88 @@ function CameraRig({ mobile, reduced }: Quality) {
   return null;
 }
 
+/**
+ * Contact shadows recalculate only while parts are moving onto the car.
+ * Before that there is nothing on the floor to shadow; after it the car is
+ * still and the shadow is drawn once and kept, so the extra depth render
+ * stops costing anything.
+ */
+function Shadows({ light }: { light: boolean }) {
+  // On the light path the assembling phase is not live either: the shadow is
+  // redrawn in ~7 steps as the car comes together (each step a key change).
+  const [phase, setPhase] = useState<string>("0");
+  const current = useRef("0");
+  const group = useRef<THREE.Group>(null);
+
+  useFrame(() => {
+    const s = hero.state;
+    const pr = hero.progress;
+    const p = hero.warm ? "1" : pr < 0.45 ? "0" : pr < 0.72 ? (light ? `1-${Math.floor(pr * 25)}` : "1") : "2";
+    if (p !== current.current) {
+      current.current = p;
+      setPhase(p);
+    }
+    const mesh = group.current?.children[0] as THREE.Mesh | undefined;
+    const mat = mesh?.material as THREE.Material | undefined;
+    if (mat) mat.opacity = Math.min(1, s.chassis * 0.6 + s.body * 0.35);
+  });
+
+  return (
+    <ContactShadows
+      key={phase}
+      ref={group}
+      frames={phase === "1" ? Infinity : 1}
+      position={[0, 0.001, 0]}
+      scale={11}
+      blur={2.4}
+      far={2.2}
+      resolution={light ? 256 : 384}
+      opacity={0}
+      color="#000000"
+    />
+  );
+}
+
 /** Fades the showroom in: brighter reflections, light strips, reflective floor. */
-function Showroom({ mobile }: { mobile: boolean }) {
+function Showroom({ mobile, tier, light }: { mobile: boolean; tier: Tier; light: boolean }) {
   const strips = useRef<THREE.Group>(null);
-  const floorMat = useRef<THREE.MeshStandardMaterial & { mixStrength?: number }>(null);
-  const shadows = useRef<THREE.Group>(null);
+  const matte = useRef<THREE.Mesh>(null);
+  const mirror = useRef<THREE.Mesh>(null);
+  const mirrorMat = useRef<THREE.MeshStandardMaterial & { mixStrength?: number }>(null);
 
   useFrame((state) => {
     const s = hero.state;
     const show = s.showroom;
     state.scene.environmentIntensity = 0.55 + show * 0.55;
     if (strips.current) {
-      strips.current.visible = show > 0.01;
+      strips.current.visible = hero.warm || show > 0.01;
       strips.current.children.forEach((c) => {
         const m = (c as THREE.Mesh).material as THREE.MeshBasicMaterial;
         m.opacity = show;
       });
     }
-    if (floorMat.current && "mixStrength" in floorMat.current) floorMat.current.mixStrength = 0.4 + show * 3.2;
-    if (shadows.current) {
-      const mesh = shadows.current.children[0] as THREE.Mesh | undefined;
-      const mat = mesh?.material as THREE.Material | undefined;
-      if (mat) mat.opacity = Math.min(1, s.chassis * 0.6 + s.body * 0.35);
-    }
+    // The mirror floor re-renders the whole scene each frame, so it only
+    // exists once the showroom is on, and only at the top quality step.
+    // A hidden mesh skips that extra render entirely.
+    const useMirror = !mobile && (hero.warm || (tier === 2 && show > 0.01));
+    if (mirror.current) mirror.current.visible = useMirror;
+    if (matte.current) matte.current.visible = !useMirror || hero.warm;
+    if (mirrorMat.current && "mixStrength" in mirrorMat.current) mirrorMat.current.mixStrength = 0.4 + show * 3.2;
   });
 
   return (
     <>
-      {/* Floor */}
-      <mesh rotation-x={-Math.PI / 2} position-y={-0.002} receiveShadow={false}>
+      <mesh ref={matte} rotation-x={-Math.PI / 2} position-y={-0.002}>
         <planeGeometry args={[60, 60]} />
-        {mobile ? (
-          <meshStandardMaterial color="#0a0b0b" roughness={0.6} metalness={0.4} />
-        ) : (
+        <meshStandardMaterial color="#0a0b0b" roughness={0.6} metalness={0.4} />
+      </mesh>
+      {!mobile && (
+        <mesh ref={mirror} rotation-x={-Math.PI / 2} position-y={-0.0015} visible={false}>
+          <planeGeometry args={[60, 60]} />
           <MeshReflectorMaterial
-            ref={floorMat as never}
-            blur={[380, 90]}
-            resolution={1024}
+            ref={mirrorMat as never}
+            blur={[300, 80]}
+            resolution={512}
             mixBlur={1}
             mixStrength={0.4}
             roughness={0.85}
@@ -130,11 +189,11 @@ function Showroom({ mobile }: { mobile: boolean }) {
             metalness={0.55}
             mirror={0}
           />
-        )}
-      </mesh>
-      <ContactShadows ref={shadows} position={[0, 0.001, 0]} scale={11} blur={2.4} far={2.2} resolution={mobile ? 256 : 512} opacity={0} color="#000000" />
+        </mesh>
+      )}
+      <Shadows light={mobile || light} />
       {/* Overhead light strips, visible once the showroom is on */}
-      <group ref={strips} position={[0, 6.2, 0]}>
+      <group ref={strips} position={[0, 6.2, 0]} visible={false}>
         {[-2.6, 0, 2.6].map((x) => (
           <mesh key={x} position={[x, 0, -0.5]} rotation-x={Math.PI / 2}>
             <planeGeometry args={[0.18, 9]} />
@@ -156,13 +215,20 @@ function Lights() {
   return (
     <>
       <ambientLight intensity={0.06} />
+      {/* One key light. Fill comes from the studio environment, which costs
+          nothing per light; each extra spot is evaluated on every lit pixel. */}
       <spotLight ref={key} position={[-2.5, 8.5, -3.5]} angle={0.6} penumbra={0.9} intensity={60} color="#fffaf0" decay={1.6} />
-      <spotLight position={[-6, 3, -6]} angle={0.5} penumbra={1} intensity={18} color="#dfe5ff" decay={1.6} />
     </>
   );
 }
 
-export function Scene({ mobile, reduced, onRig }: Quality & { onRig: (rig: Rig) => void }) {
+/**
+ * startTier is the quality step chosen at load and never changes: anything
+ * that alters the shader set (lights, bloom) is decided from it once, so
+ * later step changes only touch resolution, MSAA and the mirror floor.
+ */
+export function Scene({ mobile, reduced, tier, startTier, onRig }: Quality & { tier: Tier; startTier: Tier; onRig: (rig: Rig) => void }) {
+  const light = mobile || startTier === 0;
   return (
     <>
       <color attach="background" args={["#080909"]} />
@@ -176,12 +242,14 @@ export function Scene({ mobile, reduced, onRig }: Quality & { onRig: (rig: Rig) 
         <Lightformer form="ring" intensity={1.5} color="#b6aa91" position={[0, 2, 7]} scale={2.5} />
       </Environment>
       <Lights />
-      <Vehicle mobile={mobile} onRig={onRig} />
-      <Showroom mobile={mobile} />
+      <Vehicle mobile={mobile} beams={!light} onRig={onRig} />
+      <Showroom mobile={mobile} tier={tier} light={light} />
       <CameraRig mobile={mobile} reduced={reduced} />
+      {/* Always on for desktop, at every step: dropping it would change the
+          output path of every material and force a full recompile. */}
       {!mobile && (
-        <EffectComposer multisampling={4}>
-          <Bloom mipmapBlur luminanceThreshold={2.6} luminanceSmoothing={0.2} intensity={0.75} radius={0.7} />
+        <EffectComposer multisampling={tier === 2 ? 4 : tier === 1 ? 2 : 0}>
+          {!light ? <Bloom mipmapBlur luminanceThreshold={2.6} luminanceSmoothing={0.2} intensity={0.75} radius={0.7} /> : <></>}
           <Vignette offset={0.32} darkness={0.62} />
           <ToneMapping mode={ToneMappingMode.AGX} />
         </EffectComposer>

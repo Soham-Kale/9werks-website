@@ -13,7 +13,7 @@ import { loadArtworkFaceMaps, type FaceMaps } from "./textures";
 
 useGLTF.setDecoderPath("/draco/");
 
-type Props = { mobile: boolean; onRig: (rig: Rig) => void };
+type Props = { mobile: boolean; beams: boolean; onRig: (rig: Rig) => void };
 
 const _v = new THREE.Vector3();
 
@@ -28,9 +28,9 @@ const ANCHORS: Record<WheelStep, [number, number]> = {
   cap: [0, 0],
 };
 
-export function Vehicle({ mobile, onRig }: Props) {
+export function Vehicle({ mobile, beams, onRig }: Props) {
   const { scene } = useGLTF(vehicleConfig.modelUrl, true, true);
-  const rig = useMemo(() => buildRig(scene, { mobile }), [scene, mobile]);
+  const rig = useMemo(() => buildRig(scene, { mobile, beams }), [scene, mobile, beams]);
   const { camera, size, invalidate } = useThree();
 
   useEffect(() => {
@@ -43,18 +43,25 @@ export function Vehicle({ mobile, onRig }: Props) {
   useEffect(() => {
     if (!brandConfig.capArtwork) return;
     let maps: FaceMaps | null = null;
-    loadArtworkFaceMaps(brandConfig.capArtwork, mobile ? 512 : 1024, (m) => {
-      maps = m;
-      rig.wheels.forEach((w) => {
-        const face = w.cap.userData.materials[1] as THREE.MeshPhysicalMaterial;
-        face.map = m.map;
-        face.roughnessMap = m.roughnessMap;
-        face.bumpMap = m.bumpMap;
-        face.needsUpdate = true;
+    const url = brandConfig.capArtwork;
+    // Warm-up waits on this, so the artwork textures are uploaded before the
+    // first frame anyone sees instead of mid-scroll.
+    hero.artworkReady = new Promise<void>((resolve) => {
+      loadArtworkFaceMaps(url, mobile ? 512 : 1024, (m) => {
+        maps = m;
+        rig.wheels.forEach((w) => {
+          const face = w.cap.userData.materials[1] as THREE.MeshPhysicalMaterial;
+          face.map = m.map;
+          face.roughnessMap = m.roughnessMap;
+          face.bumpMap = m.bumpMap;
+          face.needsUpdate = true;
+        });
+        invalidate();
+        resolve();
       });
-      invalidate();
     });
     return () => {
+      hero.artworkReady = null;
       if (maps) Object.values(maps).forEach((t) => t.dispose());
     };
   }, [rig, invalidate, mobile]);
@@ -79,11 +86,21 @@ export function Vehicle({ mobile, onRig }: Props) {
   useEffect(() => {
     const w = rig.hero;
     const local = new THREE.Vector3();
+    // Caliper and cap anchors: their centres in wheel space, measured once
+    // here rather than with a bounding-box pass on every frame.
+    w.pivot.updateWorldMatrix(true, true);
+    const toPivot = new THREE.Matrix4().copy(w.pivot.matrixWorld).invert();
+    const caliperObj = w.parts.caliper[0]?.obj;
+    const caliperAnchor = caliperObj
+      ? new THREE.Box3().setFromObject(caliperObj).getCenter(new THREE.Vector3()).applyMatrix4(toPivot)
+      : null;
     hero.project = (step) => {
       const list = w.parts[step];
       if (!list.length) return { x: 0, y: 0, visible: false };
-      if (step === "caliper" || step === "cap") {
-        new THREE.Box3().setFromObject(list[0].obj).getCenter(_v);
+      if (step === "cap") {
+        w.cap.getWorldPosition(_v); // the cap travels, so follow it
+      } else if (step === "caliper" && caliperAnchor) {
+        _v.copy(caliperAnchor).applyMatrix4(w.pivot.matrixWorld);
       } else {
         const [deg, f] = ANCHORS[step];
         const a = (deg * Math.PI) / 180;
@@ -99,7 +116,7 @@ export function Vehicle({ mobile, onRig }: Props) {
   }, [rig, camera, size]);
 
   useFrame(() => {
-    updateRig(rig, hero.state, hero.progress);
+    updateRig(rig, hero.state, hero.progress, !beams && !hero.warm);
   });
 
   return (

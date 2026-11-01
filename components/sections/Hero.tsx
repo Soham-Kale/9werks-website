@@ -76,7 +76,9 @@ export function Hero() {
   const [failed, setFailed] = useState(false);
 
   // Decide after first paint: device class, motion preference, WebGL. The 3D
-  // bundle loads when the browser is idle so it never competes with the LCP.
+  // bundle never competes with the first paint: on desktop it loads when the
+  // browser is idle; on phones it waits for the visitor's first touch, scroll
+  // or key press, so the opening screen stays light on mobile networks.
   useEffect(() => {
     const mq = matchMedia(MOBILE_Q);
     const rq = matchMedia(REDUCED_Q);
@@ -96,11 +98,18 @@ export function Hero() {
       read();
     };
     const ric = typeof requestIdleCallback === "function";
-    if (ric) idle = requestIdleCallback(start, { timeout: 1500 });
+    const INTERACTIONS = ["scroll", "touchstart", "pointerdown", "keydown", "wheel"] as const;
+    const onFirstInteraction = () => {
+      INTERACTIONS.forEach((t) => removeEventListener(t, onFirstInteraction));
+      start();
+    };
+    if (mq.matches) INTERACTIONS.forEach((t) => addEventListener(t, onFirstInteraction, { passive: true, once: true }));
+    else if (ric) idle = requestIdleCallback(start, { timeout: 1500 });
     else timer = setTimeout(start, 600);
     mq.addEventListener("change", read);
     rq.addEventListener("change", read);
     return () => {
+      INTERACTIONS.forEach((t) => removeEventListener(t, onFirstInteraction));
       if (ric) cancelIdleCallback(idle);
       clearTimeout(timer);
       mq.removeEventListener("change", read);
@@ -131,7 +140,8 @@ export function Hero() {
             src={photos.m5.src}
             alt={photos.m5.alt}
             fill
-            preload
+            loading="eager"
+            fetchPriority="high"
             sizes="100vw"
             className="object-cover object-[70%_50%]"
           />
@@ -211,7 +221,9 @@ export function Hero() {
             <div className="mt-8">
               <FinishSelector />
             </div>
-            <Ctas />
+            <div className="band-last-ctas">
+              <Ctas />
+            </div>
           </div>
         </div>
 

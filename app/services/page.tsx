@@ -59,6 +59,7 @@ export default function ServicesPage() {
                   k={s.photo}
                   ratio={l.ratio}
                   sizes={p.lowRes ? "(min-width: 768px) 34vw, 100vw" : "(min-width: 768px) 50vw, 100vw"}
+                  eager={i === 0}
                 />
               </div>
               <div className={l.text}>

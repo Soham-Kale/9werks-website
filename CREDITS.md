@@ -14,7 +14,7 @@ Every third-party asset in this project, its licence, and whether it is a **plac
 | Author | Eric Chadwick, © 2024 Darmstadt Graphics Group GmbH, based on a public-domain (CC0) model by Unity Fan |
 | Licence | Creative Commons Attribution 4.0 International (CC BY 4.0), https://creativecommons.org/licenses/by/4.0/ |
 | Changes | Compressed with Meshopt geometry compression and WebP textures (`scripts/optimize-model.mjs`). Paint, interior and rim colours are changed at runtime. |
-| Excluded | The model's Khronos and 3D Commerce logos are trademarks and are not covered by the licence. They are hidden at runtime (`config/vehicle.ts`, the `hidden` group) and the number plate is replaced with 9WERKS artwork. |
+| Excluded | The model's Khronos and 3D Commerce logos are trademarks and are not covered by the licence. They are hidden at runtime (`config/vehicle.ts`, the `hidden` group), the tyre sidewall texture that prints the Khronos wordmark is stripped (`materialOverrides`, `stripTextures`), and the number plate is replaced with 9WERKS artwork. |
 
 Attribution text, if the placeholder is ever shown publicly: *"Car Concept" by Eric Chadwick / Darmstadt Graphics Group GmbH, CC BY 4.0, modified.*
 

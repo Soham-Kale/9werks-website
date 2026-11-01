@@ -115,7 +115,7 @@ export function createPlateTexture(text: string) {
 export function loadArtworkFaceMaps(url: string, size: number, onLoad: (maps: FaceMaps) => void) {
   const img = new Image();
   img.onload = () => {
-    const s = size * 0.74;
+    const s = size * 0.78;
     const o = (size - s) / 2;
     const [cc, c] = canvas(size);
     const grd = c.createRadialGradient(size * 0.42, size * 0.38, size * 0.05, size / 2, size / 2, size * 0.55);

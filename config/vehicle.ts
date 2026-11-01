@@ -55,7 +55,10 @@ export const vehicleConfig = {
     { material: /^Interior 2/i, color: "#1d1d1e" },
     { material: /^Rim1$/i, color: "#2b2c2d", metalness: 0.9, roughness: 0.28 },
     { material: /^Rim2$/i, color: "#8d8f91", metalness: 1, roughness: 0.22 },
-  ] as { material: RegExp; color?: string; metalness?: number; roughness?: number }[],
+    // The placeholder's tyre sidewall texture prints the Khronos wordmark (a
+    // trademark outside the model's licence): strip it to plain rubber.
+    { material: /^Tireside$/i, color: "#141414", roughness: 0.7, stripTextures: true },
+  ] as { material: RegExp; color?: string; metalness?: number; roughness?: number; stripTextures?: boolean }[],
 
   /** Materials repainted by the finish selector. */
   paintMaterial: /paint/i,

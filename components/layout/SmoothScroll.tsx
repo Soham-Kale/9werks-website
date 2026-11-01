@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 
 const FINE_Q = "(pointer: fine) and (prefers-reduced-motion: no-preference)";
@@ -59,9 +59,23 @@ export function SmoothScroll() {
     };
   }, []);
 
-  // New route: start at the top. Pages using ScrollTrigger measure on mount.
+  // New route: start at the top and ease the new page in. The very first load
+  // is left still, so the largest paint is never held back by an animation.
+  const first = useRef(true);
   useEffect(() => {
     window.scrollTo(0, 0);
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    const main = document.getElementById("main");
+    if (!main || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    main.classList.remove("page-enter");
+    void main.offsetWidth; // restart the animation
+    main.classList.add("page-enter");
+    const done = () => main.classList.remove("page-enter");
+    main.addEventListener("animationend", done, { once: true });
+    return () => main.removeEventListener("animationend", done);
   }, [pathname]);
 
   return null;

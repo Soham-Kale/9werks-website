@@ -19,8 +19,11 @@ export function PageHeader({ label, lines, lede, photo, position = "50% 50%" }: 
   return (
     <header className="relative isolate overflow-hidden pt-[calc(var(--nav-h)+clamp(56px,10vw,160px))]">
       {p && (
-        <div className="enter-fade absolute inset-0 -z-10" aria-hidden="true">
-          <Image src={p.src} alt="" fill preload sizes="100vw" className="object-cover opacity-35" style={{ objectPosition: position }} />
+        // Decorative backdrop, tablet and up only. On phones it would become the
+        // largest paint and hold it back; the headline paints first instead.
+        // Lazy, so a hidden image is never downloaded on small screens.
+        <div className="absolute inset-0 -z-10 hidden md:block" aria-hidden="true">
+          <Image src={p.src} alt="" fill loading="lazy" sizes="100vw" className="object-cover opacity-35" style={{ objectPosition: position }} />
           <div className="absolute inset-0 bg-gradient-to-b from-obsidian/60 via-obsidian/75 to-obsidian" />
         </div>
       )}

@@ -60,6 +60,12 @@ export const hero = {
   /** set by the scene: projects a wheel part to screen space for callouts */
   project: null as null | ((step: WheelStep) => { x: number; y: number; visible: boolean }),
   invalidate: () => {},
+  /** true while the scene is being pre-compiled behind the loader: every part, light and floor shown at once */
+  warm: false,
+  /** set once after warm-up: the camera jumps to its shot instead of easing in from nowhere */
+  snapCamera: false,
+  /** resolves when the centre-cap artwork textures exist, so warm-up can upload them too */
+  artworkReady: null as Promise<void> | null,
 };
 
 if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {

@@ -13,6 +13,11 @@ const archivo = Archivo({
   subsets: ["latin"],
   axes: ["wdth"],
   display: "swap",
+  // Our own wide fallback (globals.css): the default one is sized for normal
+  // width, so swapping to expanded Archivo would grow the headline and log a
+  // second, later largest paint.
+  adjustFontFallback: false,
+  fallback: ["Archivo Wide Fallback", "Arial", "sans-serif"],
 });
 const hanken = Hanken_Grotesk({
   variable: "--font-hanken",
